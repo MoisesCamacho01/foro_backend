@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+.cursor/mcp.json
+documentation/api-requests-flujo.md

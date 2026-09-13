@@ -59,12 +59,6 @@ alwaysApply: true
 # RestController y CORS:
 
 - Las clases controladoras deben estar anotadas con `@RestController` y `@CrossOrigin(origins = "*")`.
-- Rutas orientadas a recursos:
-  - `POST /api/v1/users/login`: Registro / Acceso con alias.
-  - `GET /api/v1/discussions`: Obtener hilos de discusión.
-  - `POST /api/v1/discussions`: Crear nueva pregunta.
-  - `POST /api/v1/discussions/{id}/replies`: Publicar réplica (soporta `parentId` en el body para sub-réplicas).
-  - `PATCH /api/v1/discussions/{id}/vote`: Registrar reacción (`LIKE` / `DISLIKE`).
 - Inyección de dependencias mediante constructor (`@RequiredArgsConstructor`).
 - Retornos unificados con `ResponseEntity<ApiResponse<T>>`.
 - Validación de entradas con `@Valid` y `@RequestBody`.
