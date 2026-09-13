@@ -1,0 +1,202 @@
+---
+description: Reglas de Cursor para desarrollo backend en Java Spring Boot con persistencia JSON para Forobackend.
+alwaysApply: true
+---
+
+# Rol de la IA:
+
+- Eres un desarrollador Java Senior experimentado. Siempre te adhieres a los principios SOLID, DRY, KISS y YAGNI.
+- Siempre sigues las mejores prácticas de OWASP. Siempre divides las tareas en las unidades más pequeñas posibles y abordas la resolución de cualquier tarea paso a paso.
+
+# Stack tecnológico:
+
+- Framework: Java Spring Boot 4.1.x con Maven y Java 26.0.x 
+- Dependencias: Spring Web, Lombok, Jackson Databind, Validation (Hibernate Validator).
+- Persistencia: Almacenamiento basado en archivos JSON locales (lectura y escritura mediante ObjectMapper), omitiendo controladores de vistas (Thymeleaf) y conectores de BD relacionales.
+
+# Diseño de la lógica de la aplicación:
+
+- Todo el manejo de peticiones y respuestas debe realizarse únicamente en los `@RestController`.
+- Toda la lógica de negocio y las operaciones de lectura/escritura en archivos JSON debe residir en las clases `@Service` (o sus implementaciones `ServiceImpl`), las cuales utilizarán componentes dedicados a la manipulación de archivos (`JsonRepository` o `FileDAO`).
+- Los `@RestController` deben depender únicamente de las interfaces de servicio (`Service`) y nunca acceder o inyectar directamente la capa de manipulación de archivos JSON ni el `ObjectMapper`.
+- Las clases `ServiceImpl` deben delegar la lectura, deserialización, serialización y escritura física de los archivos JSON a componentes o repositorios especializados en archivos.
+- El intercambio de datos entre los `@RestController` y las clases `ServiceImpl` (y viceversa) debe realizarse únicamente mediante DTOs (Data Transfer Objects).
+- Los modelos o clases que mapean directamente la estructura interna de los archivos JSON (`Models`) no deben exponerse hacia el exterior (cliente API) ni usarse en la capa de controlador.
+
+# Modelos (Estructura de Datos JSON):
+
+- Las clases de modelo representarán la estructura POJO plana correspondiente a la forma del archivo JSON.
+- Las clases deben estar anotadas con `@Data` (o `@Getter`, `@Setter`, `@AllArgsConstructor`, `@NoArgsConstructor`).
+- El campo identificador debe ser un `String` (UUID v4) generado programáticamente antes de guardar.
+- Para el modelado de preguntas y respuestas en cascada/árbol (jerarquía de réplicas), el modelo de respuesta debe almacenar un `parentId` (`String`, opcional/nullable) que apunte al ID de la pregunta o respuesta padre.
+- Para las reacciones (votos), el modelo debe incluir contadores explícitos: `likesCount` y `dislikesCount`.
+- Se deben utilizar anotaciones de Jackson cuando el esquema JSON lo requiera (p. ej., `@JsonProperty("nombre_campo")`, `@JsonInclude(JsonInclude.Include.NON_NULL)`).
+
+# Repositorio (DAO - Archivos JSON):
+
+- Las clases o implementaciones de repositorio deben estar anotadas con `@Repository`.
+- El repositorio debe definirse como una interfaz y su correspondiente clase de implementación (`FooRepository` y `JsonFooRepository`).
+- Las clases de repositorio deben utilizar `ObjectMapper` de Jackson junto con la API de archivos de Java (`java.nio.file.Path` / `Files`) para realizar operaciones en los archivos `.json` locales.
+- Deben gestionar la concurrencia mediante `ReentrantReadWriteLock` o métodos sincronizados para garantizar escrituras thread-safe.
+- El repositorio debe capturar las excepciones `IOException` de Jackson/Java y relanzarlas como excepciones personalizadas de tiempo de ejecución (`PersistenceException`).
+
+# Servicio:
+
+- Las clases de servicio deben definirse estrictamente como interfaces.
+- Todas las implementaciones de la lógica de negocio deben residir en clases `ServiceImpl` anotadas con `@Service`.
+- Las dependencias deben inyectarse mediante constructor utilizando Lombok (`@RequiredArgsConstructor` con campos `private final`).
+- Los valores devueltos por los métodos de `ServiceImpl` deben ser DTOs.
+- **Construcción del Árbol de Respuestas:** El servicio debe transformar la lista plana de réplicas con `parentId` en una estructura anidada de DTOs (`List<CommentResponseDTO> replies`) para la visualización escalonada en el frontend.
+- Para operaciones atómicas como la incrementación de votos (`like`/`dislike`), el servicio debe coordinar el bloqueo en el repositorio antes de reescribir el archivo JSON.
+
+# Objeto de Transferencia de Datos (DTO):
+
+- Todos los DTOs deben definirse utilizando `record` de Java.
+- Deben incluir un constructor compacto para validaciones defensivas inmediatas.
+- Se deben incluir anotaciones de Bean Validation (`@NotNull`, `@NotBlank`, `@Size`) sobre los componentes del `record`.
+- Para DTOs de salida con jerarquía de réplicas, el `record` de respuesta debe incluir el campo `List<CommentResponseDTO> replies` para enviar el árbol completo estructurado al cliente.
+
+# RestController y CORS:
+
+- Las clases controladoras deben estar anotadas con `@RestController` y `@CrossOrigin(origins = "*")`.
+- Rutas orientadas a recursos:
+  - `POST /api/v1/users/login`: Registro / Acceso con alias.
+  - `GET /api/v1/discussions`: Obtener hilos de discusión.
+  - `POST /api/v1/discussions`: Crear nueva pregunta.
+  - `POST /api/v1/discussions/{id}/replies`: Publicar réplica (soporta `parentId` en el body para sub-réplicas).
+  - `PATCH /api/v1/discussions/{id}/vote`: Registrar reacción (`LIKE` / `DISLIKE`).
+- Inyección de dependencias mediante constructor (`@RequiredArgsConstructor`).
+- Retornos unificados con `ResponseEntity<ApiResponse<T>>`.
+- Validación de entradas con `@Valid` y `@RequestBody`.
+- Sin bloques `try-catch` internos en los métodos (delegado a `@RestControllerAdvice`).
+
+# Estructura de Clases Globales:
+
+- Clase `ApiResponse<T>`:
+```java
+package com.forumhub.dto;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class ApiResponse<T> {
+
+    private String result;          // "SUCCESS" o "ERROR"
+    private String message;         // Mensaje descriptivo
+    private T data;                 // Objeto DTO o colección
+    private LocalDateTime timestamp;// Fecha y hora de respuesta
+
+    public static <T> ApiResponse<T> success(String message, T data) {
+        return ApiResponse.<T>builder()
+                .result("SUCCESS")
+                .message(message)
+                .data(data)
+                .timestamp(LocalDateTime.now())
+                .build();
+    }
+
+    public static <T> ApiResponse<T> error(String message) {
+        return ApiResponse.<T>builder()
+                .result("ERROR")
+                .message(message)
+                .data(null)
+                .timestamp(LocalDateTime.now())
+                .build();
+    }
+}
+```
+- Clase GlobalExceptionHandler (/GlobalExceptionHandler.java)
+```Java
+package com.forumhub.exception;
+
+import com.forumhub.dto.ApiResponse;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.util.stream.Collectors;
+
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    public static ResponseEntity<ApiResponse<?>> errorResponseEntity(String message, HttpStatus status) {
+        ApiResponse<?> response = ApiResponse.error(message);
+        return new ResponseEntity<>(response, status);
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<?>> handleValidationException(MethodArgumentNotValidException ex) {
+        String errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        return errorResponseEntity("Error de validación: " + errors, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<?>> handleIllegalArgumentException(IllegalArgumentException ex) {
+        return errorResponseEntity(ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiResponse<?>> handleResourceNotFoundException(ResourceNotFoundException ex) {
+        return errorResponseEntity(ex.getMessage(), HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<?>> handleGenericException(Exception ex) {
+        return errorResponseEntity("Ocurrió un error interno en el servidor: " + ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+}
+```
+
+# Reglas para realizar commits
+
+- Nunca realices "git add ." en cambio usa git add nombre_del_ficher
+- El commit tiene que ser claro y en español
+- Utiliza los prefijos de git para subir los commits:
+    - feat: Una nueva característica para el usuario.
+    - fix: Arregla un bug que afecta al usuario.
+    - perf: Cambios que mejoran el rendimiento del sitio.
+    - build: Cambios en el sistema de build, tareas de despliegue o instalación.
+    - ci: Cambios en la integración continua.
+    - docs: Cambios en la documentación.
+    - refactor: Refactorización del código como cambios de nombre de variables o funciones.
+    - style: Cambios de formato, tabulaciones, espacios o puntos y coma, etc; no afectan al usuario.
+    - test: Añade tests o refactoriza uno existente.
+
+# Reglas para realizar pruebas de QA (Backend API REST):
+
+- Utiliza **JUnit 5**, **MockMvc** y **REST Assured** (o un servidor local ejecutable) para realizar pruebas funcionales de los `@RestController`.
+- Utiliza cURL o colecciones automatizadas (como Postman/Hoppscotch) si se requiere validación manual o de integración E2E.
+- En lugar de comparar diseños visuales (Stitch), las pruebas de QA deben **validar estrictamente el contrato del JSON de respuesta** (`ApiResponse<T>`) frente a los DTOs definidos de tipo `record`.
+- Verifica que los códigos de estado HTTP (`200 OK`, `201 Created`, `400 Bad Request`, `404 Not Found`, `500 Internal Server Error`) coincidan exactamente con la especificación.
+- Toda prueba de integración debe validar que la lectura, actualización y escritura en el archivo `.json` de prueba local se refleje de manera correcta y atómica en el disco.
+- Realiza pruebas de estrés o hilos concurrentes simulados para verificar que los bloqueos (`ReentrantReadWriteLock`) en los repositorios eviten corrupción de datos.
+- Todas las ejecuciones de pruebas de QA y sus resultados deben guardarse en un reporte detallado en formato Markdown dentro de la carpeta `/documentation` (p. ej., `/documentation/qa-test-results.md`).
+- Se estricto con las pruebas de QA: una respuesta con estructura JSON incorrecta, tipos de datos no coincidentes, o falla en la manipulación del archivo local se considerará una prueba fallida.
+- Si las pruebas de QA no son satisfactorias, vuelve a analizar la regla del módulo, corrige la implementación en la capa correspondiente (`Controller`, `Service` o `Repository`) y reejecuta la suite de pruebas hasta lograr el 100% de éxito.
+
+# Reglas de documentacion backend
+
+- Realiza la documentacion una vez que las pruebas de QA finalizaran satisfactoriamente
+- Todos los cambios que se realicen en el proyecto tiene que estar documentados en la carpeta documentation/{idCommit} con el siguiente formato idCommit_fecha.md
+- Los documentos creados tienen que tener diagramas explicativos del proceso y ajustes que se realizaron
+
+# Reglas para crear las tareas
+
+- Analiza la propuesta grafica antes de empezar a desarrollar
+- Separa la propuesta en pequeñas tareas realizables
+- Crea todas las tareas en la carpeta /task/
+- Ordena las tareas por dificultad
