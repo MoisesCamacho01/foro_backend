@@ -34,3 +34,6 @@ build/
 
 .cursor/mcp.json
 documentation/api-requests-flujo.md
+
+# Datos de desarrollo JSON
+data/*.json
