@@ -1,8 +1,10 @@
 package com.example.foro_backend.service.impl;
 
+import com.example.foro_backend.config.MaxReplyLevels;
 import com.example.foro_backend.dto.forum.CreateCommentRequest;
 import com.example.foro_backend.dto.forum.CreateQuestionRequest;
 import com.example.foro_backend.dto.forum.ForumCommentResponse;
+import com.example.foro_backend.dto.forum.ForumConfigResponse;
 import com.example.foro_backend.dto.forum.VoteRequest;
 import com.example.foro_backend.dto.forum.VoteStateResponse;
 import com.example.foro_backend.exception.ResourceNotFoundException;
@@ -31,6 +33,12 @@ public class ForumServiceImpl implements ForumService {
     private final VoteRepository voteRepository;
     private final TreeBuilder treeBuilder;
     private final CommentMapper commentMapper;
+    private final MaxReplyLevels maxReplyLevels;
+
+    @Override
+    public ForumConfigResponse getForumConfig() {
+        return new ForumConfigResponse(maxReplyLevels.limit());
+    }
 
     @Override
     public List<ForumCommentResponse> getAllQuestions(String currentUserAlias) {
@@ -67,6 +75,12 @@ public class ForumServiceImpl implements ForumService {
         }
 
         int level = treeBuilder.calculateLevel(parent.getId(), commentsById) + 1;
+        if (!maxReplyLevels.allowsLevel(level)) {
+            throw new IllegalArgumentException(
+                    "Se alcanzó el máximo de " + maxReplyLevels.limit() + " niveles de respuesta permitidos"
+            );
+        }
+
         CommentModel reply = new CommentModel(
                 UUID.randomUUID().toString(),
                 request.parentId(),
